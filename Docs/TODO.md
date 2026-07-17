@@ -72,11 +72,11 @@ Credentials are already in `.env` and the bot is live. Checklist to walk through
 - [ ] Asked whether stores are real, the bot says it's demo data
 - [ ] `/reset` clears context; `/help` reads correctly
 
-### 2. Commit and push the localization change
+### 2. ~~Commit and push the localization change~~ — done
 
-`main.py`'s Hebrew/English onboarding auto-detection is written and confirmed
-working live, but not yet committed. Push once the checklist above passes, so
-the commit reflects a fully verified flow rather than a partial one.
+Pushed as `ce8eb27`, ahead of the original plan to wait for the full checklist
+— the user wanted this backed up rather than sitting only on disk. The
+checklist below is still open; nothing about pushing early changes that.
 
 ### 3. Rich message formatting — do this before screenshots
 
