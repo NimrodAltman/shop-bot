@@ -10,6 +10,19 @@ results into a recommendation.
 
 ---
 
+## Status
+
+All five layers are implemented and the bot starts cleanly. The catalog,
+storage and tool layers are verified by direct execution — filtering, distance
+math, order validation and every error path. Screenshots and an end-to-end
+walkthrough are pending; running the bot requires your own Telegram token and
+Anthropic key ([Setup](#setup)).
+
+Full breakdown, including what is and isn't verified, in
+[`Docs/TODO.md`](Docs/TODO.md).
+
+---
+
 ## What it demonstrates
 
 - **An AI agent with tool use** — a system prompt plus a tool-use loop against
@@ -166,6 +179,7 @@ and storage are unchanged by that choice.
 | [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Layer design, the tool-use loop, prompt caching, design decisions |
 | [`Docs/DATA_MODEL.md`](Docs/DATA_MODEL.md) | Data shapes, the tool reference, Supabase schema |
 | [`Docs/DEPLOYMENT.md`](Docs/DEPLOYMENT.md) | Running locally and deploying to Railway |
+| [`Docs/TODO.md`](Docs/TODO.md) | Status, what's verified, roadmap, known limitations |
 
 ---
 
