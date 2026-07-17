@@ -12,11 +12,13 @@ results into a recommendation.
 
 ## Status
 
-All five layers are implemented and the bot starts cleanly. The catalog,
-storage and tool layers are verified by direct execution — filtering, distance
-math, order validation and every error path. Screenshots and an end-to-end
-walkthrough are pending; running the bot requires your own Telegram token and
-Anthropic key ([Setup](#setup)).
+All five layers are implemented. The catalog, storage and tool layers are
+verified by direct execution — filtering, distance math, order validation and
+every error path. The bot itself is live and connects to Telegram with real
+credentials; onboarding (buttons, greeting) auto-localizes to the user's
+Telegram language and has been confirmed working in Hebrew. A full
+conversation walkthrough (recommendations, orders, reviews) and README
+screenshots are still pending.
 
 Full breakdown, including what is and isn't verified, in
 [`Docs/TODO.md`](Docs/TODO.md).
@@ -38,6 +40,7 @@ Full breakdown, including what is and isn't verified, in
 ## Features
 
 - 💬 Natural conversation in any language — the bot replies in the language you write in
+- 🌐 Onboarding (buttons, greeting) auto-localizes to Hebrew or English based on your Telegram language
 - 🧠 Recommendations matched to your need, budget, brand and rating preferences
 - 📍 Finds nearby stores from shared GPS coordinates, or by city name
 - 🛒 Places orders, with validation that the store actually carries the product

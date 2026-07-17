@@ -14,6 +14,12 @@ Two things worth knowing before editing:
 2. ``agent.ask_agent`` is synchronous and can block for seconds. It is handed to
    ``asyncio.to_thread`` so one user's slow turn doesn't freeze the bot for
    everyone else.
+
+Language: the free-text conversation is handled entirely by the agent, which
+detects the user's language on its own (see ``agent.STABLE_SYSTEM``). The
+onboarding UI below (buttons, /start, /help) never touches the agent, so it is
+localized separately here, based on the user's Telegram client language
+(``update.effective_user.language_code``) — no manual language switch needed.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     Update,
+    User,
 )
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -58,39 +65,137 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 # Telegram rejects messages longer than 4096 characters.
 TELEGRAM_MAX_CHARS = 4096
 
+# ── Localization ────────────────────────────────────────────────────────────
+# Only the onboarding UI lives here. Free-text chat is localized by the agent
+# itself, per-message, and isn't affected by any of this.
+SUPPORTED_LANGS = ("en", "he")
+
+CATEGORY_LABELS_HE = {
+    "tv": "טלוויזיה",
+    "air_conditioner": "מזגן",
+    "refrigerator": "מקרר",
+    "washing_machine": "מכונת כביסה",
+    "microwave": "מיקרוגל",
+}
+
+# (internal budget ceiling, English label, Hebrew label)
 BUDGET_OPTIONS = [
-    ("Under ₪1,000", 1000),
-    ("₪1,000–3,000", 3000),
-    ("₪3,000–5,000", 5000),
-    ("₪5,000+", 99999),
+    (1000, "Under ₪1,000", "עד ₪1,000"),
+    (3000, "₪1,000–3,000", "₪1,000–3,000"),
+    (5000, "₪3,000–5,000", "₪3,000–5,000"),
+    (99999, "₪5,000+", "₪5,000 ומעלה"),
 ]
+
+STRINGS = {
+    "en": {
+        "greeting": (
+            "Hi {name}! 👋\n\n"
+            "I help you pick a home appliance that actually fits your needs, and "
+            "find a store near you that has it in stock.\n\n"
+            "What are you shopping for?"
+        ),
+        "category_other": "Something else / just browsing",
+        "category_any_label": "an appliance",
+        "category_confirm": "Great — looking for {label}. 👌",
+        "ask_budget": "What's your budget?",
+        "budget_no_limit": "No budget in mind",
+        "budget_confirm_set": "Budget noted: up to ₪{budget:,}.",
+        "budget_confirm_none": "No problem.",
+        "ask_location": "Last thing — where are you? Share your location or just type your city.",
+        "share_location_button": "📍 Share my location",
+        "location_placeholder": "…or just type your city",
+        "location_received": "Got your location 📍",
+        "location_prompt_to_agent": "Which stores are near me, and what do you recommend?",
+        "help": (
+            "*What I can do*\n\n"
+            "• Recommend an appliance for your needs and budget\n"
+            "• Tell you which nearby store carries it\n"
+            "• Place an order and check its status\n"
+            "• Answer questions about specs and energy ratings\n\n"
+            "Just tell me what you're looking for — or send /start to go through "
+            "the guided flow again.\n\n"
+            "_Note: this is a portfolio demo. The stores, stock and orders are "
+            "realistic sample data, not a real retailer._"
+        ),
+        "reset": "Fresh start — what are you looking for? 🛒",
+    },
+    "he": {
+        "greeting": (
+            "היי {name}! 👋\n\n"
+            "אני עוזר לבחור מכשיר חשמלי שבאמת מתאים לצרכים שלך, ולמצוא חנות "
+            "קרובה שיש לה אותו במלאי.\n\n"
+            "מה מחפשים?"
+        ),
+        "category_other": "משהו אחר / רק מסתכלים",
+        "category_any_label": "מכשיר חשמלי",
+        "category_confirm": "מעולה — מחפשים {label}. 👌",
+        "ask_budget": "מה התקציב?",
+        "budget_no_limit": "אין תקציב מוגדר",
+        "budget_confirm_set": "התקציב נקלט: עד ₪{budget:,}.",
+        "budget_confirm_none": "אין בעיה.",
+        "ask_location": "עוד דבר אחד — איפה אתם נמצאים? שתפו מיקום או פשוט הקלידו את העיר.",
+        "share_location_button": "📍 שיתוף המיקום שלי",
+        "location_placeholder": "…או פשוט הקלידו את העיר",
+        "location_received": "קיבלתי את המיקום 📍",
+        "location_prompt_to_agent": "אילו חנויות קרובות אליי, ומה אתם ממליצים?",
+        "help": (
+            "*מה אני יכול לעשות*\n\n"
+            "• להמליץ על מכשיר חשמלי לפי הצרכים והתקציב שלכם\n"
+            "• להגיד לכם איזו חנות קרובה מחזיקה אותו\n"
+            "• לבצע הזמנה ולבדוק את הסטטוס שלה\n"
+            "• לענות על שאלות לגבי מפרטים ודירוגי אנרגיה\n\n"
+            "פשוט תגידו לי מה אתם מחפשים — או שלחו /start כדי לעבור שוב על "
+            "התהליך המודרך.\n\n"
+            "_הערה: זהו פרויקט הדגמה. החנויות, המלאי וההזמנות הם נתוני דוגמה "
+            "ריאליסטיים, לא קמעונאי אמיתי._"
+        ),
+        "reset": "התחלה חדשה — מה אתם מחפשים? 🛒",
+    },
+}
+
+
+def _lang(user: User | None) -> str:
+    """Map a Telegram user's client language to a supported UI language."""
+    code = (getattr(user, "language_code", None) or "en").split("-")[0].lower()
+    return code if code in SUPPORTED_LANGS else "en"
+
+
+def _t(lang: str, key: str, **kwargs) -> str:
+    return STRINGS[lang][key].format(**kwargs)
+
+
+def _category_label(key: str, lang: str) -> str:
+    labels = CATEGORY_LABELS_HE if lang == "he" else CATEGORY_LABELS
+    return labels.get(key, key)
 
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
-def _category_keyboard() -> InlineKeyboardMarkup:
+def _category_keyboard(lang: str) -> InlineKeyboardMarkup:
+    labels = CATEGORY_LABELS_HE if lang == "he" else CATEGORY_LABELS
     buttons = [
         [InlineKeyboardButton(label, callback_data=f"cat:{key}")]
-        for key, label in CATEGORY_LABELS.items()
+        for key, label in labels.items()
     ]
-    buttons.append([InlineKeyboardButton("Something else / just browsing", callback_data="cat:any")])
+    buttons.append([InlineKeyboardButton(_t(lang, "category_other"), callback_data="cat:any")])
     return InlineKeyboardMarkup(buttons)
 
 
-def _budget_keyboard() -> InlineKeyboardMarkup:
+def _budget_keyboard(lang: str) -> InlineKeyboardMarkup:
+    label_idx = 2 if lang == "he" else 1
     buttons = [
-        [InlineKeyboardButton(label, callback_data=f"budget:{value}")]
-        for label, value in BUDGET_OPTIONS
+        [InlineKeyboardButton(option[label_idx], callback_data=f"budget:{option[0]}")]
+        for option in BUDGET_OPTIONS
     ]
-    buttons.append([InlineKeyboardButton("No budget in mind", callback_data="budget:0")])
+    buttons.append([InlineKeyboardButton(_t(lang, "budget_no_limit"), callback_data="budget:0")])
     return InlineKeyboardMarkup(buttons)
 
 
-def _location_keyboard() -> ReplyKeyboardMarkup:
+def _location_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("📍 Share my location", request_location=True)]],
+        [[KeyboardButton(_t(lang, "share_location_button"), request_location=True)]],
         resize_keyboard=True,
         one_time_keyboard=True,
-        input_field_placeholder="…or just type your city",
+        input_field_placeholder=_t(lang, "location_placeholder"),
     )
 
 
@@ -126,35 +231,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user:
         return
+    lang = _lang(user)
 
     agent.reset_conversation(user.id)
     agent.update_profile(user.id, name=user.first_name, onboarding_complete=False)
 
     await _send(
         update,
-        f"Hi {user.first_name}! 👋\n\n"
-        "I help you pick a home appliance that actually fits your needs, and find "
-        "a store near you that has it in stock.\n\n"
-        "What are you shopping for?",
-        reply_markup=_category_keyboard(),
+        _t(lang, "greeting", name=user.first_name),
+        reply_markup=_category_keyboard(lang),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/help — what this bot can do."""
-    await _send(
-        update,
-        "*What I can do*\n\n"
-        "• Recommend an appliance for your needs and budget\n"
-        "• Tell you which nearby store carries it\n"
-        "• Place an order and check its status\n"
-        "• Answer questions about specs and energy ratings\n\n"
-        "Just tell me what you're looking for — or send /start to go through "
-        "the guided flow again.\n\n"
-        "_Note: this is a portfolio demo. The stores, stock and orders are "
-        "realistic sample data, not a real retailer._",
-        parse_mode="Markdown",
-    )
+    lang = _lang(update.effective_user)
+    await _send(update, _t(lang, "help"), parse_mode="Markdown")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,8 +254,9 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user:
         return
+    lang = _lang(user)
     agent.reset_conversation(user.id)
-    await _send(update, "Fresh start — what are you looking for? 🛒")
+    await _send(update, _t(lang, "reset"))
 
 
 # ── Onboarding callbacks ──────────────────────────────────────────────────────
@@ -174,18 +267,19 @@ async def on_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     await query.answer()
 
+    lang = _lang(query.from_user)
     category = query.data.split(":", 1)[1]
     user_id = query.from_user.id
 
     if category == "any":
         agent.update_profile(user_id, category=None)
-        label = "an appliance"
+        label = _t(lang, "category_any_label")
     else:
         agent.update_profile(user_id, category=category)
-        label = CATEGORY_LABELS.get(category, category)
+        label = _category_label(category, lang)
 
-    await query.edit_message_text(f"Great — looking for {label}. 👌")
-    await _send(update, "What's your budget?", reply_markup=_budget_keyboard())
+    await query.edit_message_text(_t(lang, "category_confirm", label=label))
+    await _send(update, _t(lang, "ask_budget"), reply_markup=_budget_keyboard(lang))
 
 
 async def on_budget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -195,17 +289,14 @@ async def on_budget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await query.answer()
 
+    lang = _lang(query.from_user)
     budget = int(query.data.split(":", 1)[1])
     user_id = query.from_user.id
     agent.update_profile(user_id, budget=budget or None, onboarding_complete=True)
 
-    shown = "No problem." if not budget else f"Budget noted: up to ₪{budget:,}."
-    await query.edit_message_text(f"{shown} 👌")
-    await _send(
-        update,
-        "Last thing — where are you? Share your location or just type your city.",
-        reply_markup=_location_keyboard(),
-    )
+    shown = _t(lang, "budget_confirm_none") if not budget else _t(lang, "budget_confirm_set", budget=budget)
+    await query.edit_message_text(shown)
+    await _send(update, _t(lang, "ask_location"), reply_markup=_location_keyboard(lang))
 
 
 # ── Message handlers ──────────────────────────────────────────────────────────
@@ -215,15 +306,18 @@ async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     if not message or not message.location or not user:
         return
+    lang = _lang(user)
 
     lat = message.location.latitude
     lng = message.location.longitude
     agent.update_profile(user.id, lat=lat, lng=lng)
 
-    await message.reply_text("Got your location 📍", reply_markup=ReplyKeyboardRemove())
+    await message.reply_text(_t(lang, "location_received"), reply_markup=ReplyKeyboardRemove())
+    # "LOCATION_SHARED: lat,lng" is a literal marker agent.py's system prompt
+    # matches on — keep that prefix in English regardless of UI language.
     await _reply_via_agent(
         update,
-        f"LOCATION_SHARED: {lat},{lng}\nWhich stores are near me, and what do you recommend?",
+        f"LOCATION_SHARED: {lat},{lng}\n{_t(lang, 'location_prompt_to_agent')}",
     )
 
 

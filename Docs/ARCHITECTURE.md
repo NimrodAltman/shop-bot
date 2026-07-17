@@ -97,6 +97,7 @@ common way prompt caching is silently lost.
 | **`claude-sonnet-5`** | Good cost/performance for a chat bot with tool use. |
 | **Manual tool loop** | The SDK's tool runner is in beta. A manual loop is ~30 lines and keeps the dependency surface small. |
 | **`asyncio.to_thread` for the agent** | `ask_agent` is blocking and can take seconds. Called directly in an async handler it would freeze the event loop for every user. |
+| **Two-tier localization** | Free-text chat is language-agnostic by construction — the system prompt tells Claude to detect and mirror the user's language, so it needs no code. The onboarding UI (buttons, `/start`, `/help`) never touches the agent, so it can't inherit that behavior; it's localized separately in `main.py` from Telegram's `language_code` (`he`/`he-IL` → Hebrew, else English). |
 
 ## Two bugs worth knowing about
 
