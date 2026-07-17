@@ -1,0 +1,7 @@
+anthropic>=0.117.0
+python-telegram-bot>=22.8
+python-dotenv>=1.0.0
+
+# Optional — only needed if you set SUPABASE_URL / SUPABASE_KEY.
+# Without it the bot runs fine on in-memory storage.
+# supabase>=2.0.0
