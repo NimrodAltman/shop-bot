@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 from telegram import (
@@ -66,6 +67,30 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # Telegram rejects messages longer than 4096 characters.
 TELEGRAM_MAX_CHARS = 4096
+
+# Every paid Anthropic call goes through _reply_via_agent, so one gate there
+# caps what a single chat can spend. Generous for a person typing (one message
+# every five seconds sustained), low enough to stop a flood. Held in memory:
+# a restart clears it, which is fine for a cap meant to stop an attack in
+# progress rather than to bill anyone.
+RATE_LIMIT_MESSAGES = 12
+RATE_LIMIT_WINDOW_SECONDS = 60
+_recent_messages: dict[int, list[float]] = {}
+
+
+def _is_rate_limited(user_id: int) -> bool:
+    """True when this user has already used up their window."""
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    timestamps = [t for t in _recent_messages.get(user_id, []) if t > cutoff]
+
+    if len(timestamps) >= RATE_LIMIT_MESSAGES:
+        _recent_messages[user_id] = timestamps
+        return True
+
+    timestamps.append(now)
+    _recent_messages[user_id] = timestamps
+    return False
 
 
 def _lang(user: User | None) -> str:
@@ -160,6 +185,11 @@ async def _reply_via_agent(update: Update, message: str) -> None:
     chat = update.effective_chat
     user = update.effective_user
     if not chat or not user:
+        return
+
+    if _is_rate_limited(user.id):
+        logger.warning("Rate limit hit for user %s", user.id)
+        await _send(update, _t(_lang(user), "rate_limited"))
         return
 
     await chat.send_action(ChatAction.TYPING)
