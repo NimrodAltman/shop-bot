@@ -17,6 +17,9 @@ mcp_server.py    Tools — TOOLS_SCHEMA + execute_tool dispatcher
    │
    ├── data/mock_data.py    Catalog (stores, products)
    └── db.py                State (profiles, orders, reviews, history)
+
+i18n.py          Leaf: fixed-string localization — used by main.py
+notify.py        Leaf: admin alerts to Telegram — used by agent.py + mcp_server.py
 ```
 
 What this buys:
@@ -97,7 +100,10 @@ common way prompt caching is silently lost.
 | **`claude-sonnet-5`** | Good cost/performance for a chat bot with tool use. |
 | **Manual tool loop** | The SDK's tool runner is in beta. A manual loop is ~30 lines and keeps the dependency surface small. |
 | **`asyncio.to_thread` for the agent** | `ask_agent` is blocking and can take seconds. Called directly in an async handler it would freeze the event loop for every user. |
-| **Two-tier localization** | Free-text chat is language-agnostic by construction — the system prompt tells Claude to detect and mirror the user's language, so it needs no code. The onboarding UI (buttons, `/start`, `/help`) never touches the agent, so it can't inherit that behavior; it's localized separately in `main.py` from Telegram's `language_code` (`he`/`he-IL` → Hebrew, else English). |
+| **Three-tier localization, in its own module** | Free-text chat is language-agnostic by construction — the system prompt tells Claude to detect and mirror the user's language, so it needs no code and isn't limited to any fixed list. The onboarding UI (buttons, `/start`, `/help`, `/update`) never touches the agent, so it's localized separately in `i18n.py` for four languages (`en`/`he`/`ru`/`ar`) via `resolve_lang()`: it defaults from Telegram's `language_code`, but `detect_lang()` (a Unicode-script check, no API call) overrides it the moment the user types in a different one, persisted on their profile so it sticks for future menus. `main.py` only calls into `i18n`; it holds no strings itself. |
+| **Markdown with a plain-text fallback, not MarkdownV2** | Telegram's legacy `Markdown` mode only requires closing `*`/`_` pairs; `MarkdownV2` requires escaping punctuation (`. ! - ( )` etc.) in *all* text, not just formatting — far easier for an LLM to violate. Legacy mode is still strict enough to reject a message outright on an unmatched `*`, so `_send()` catches that `BadRequest` and retries without `parse_mode` rather than losing the reply. |
+| **Admin alerts via the bot's own Telegram, not a second channel** | `notify.py` posts a plain `sendMessage` to the developer's own chat on an Anthropic API failure (`agent.py`) or a new order (`mcp_server.py`). Reuses the existing `TELEGRAM_TOKEN` — no Twilio/WhatsApp dependency. Optional: does nothing if `ADMIN_TELEGRAM_ID` isn't set, and never raises, so a failed alert can't take down the actual conversation. |
+| **`/update` re-uses the onboarding keyboards, not new ones** | Editing one saved field (category/budget/location) needed the same label lists as onboarding without inheriting its chaining (picking a category during `/update` shouldn't then ask for a budget). `_category_keyboard`/`_budget_keyboard` take an optional `prefix` so `/update`'s callbacks (`updcat:`, `updbudget:`) route to separate handlers that confirm and stop, instead of duplicating the label-building loops. |
 
 ## Two bugs worth knowing about
 

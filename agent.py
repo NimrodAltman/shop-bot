@@ -23,6 +23,7 @@ import anthropic
 from dotenv import load_dotenv
 
 import db
+import notify
 from data.mock_data import CATEGORY_LABELS
 from mcp_server import TOOLS_SCHEMA, execute_tool
 
@@ -72,6 +73,28 @@ If it is unclear, default to English.
 
 ## Product categories
 {_CATEGORY_LIST}
+
+## Formatting (Telegram Markdown)
+Your replies are rendered with Telegram's legacy Markdown — use it, but stay
+inside its rules:
+- `*text*` → bold, `_text_` → italic. Close every `*` and `_` you open. Don't
+  nest formatting (no `*bold _and italic_*`) — Telegram's parser breaks on it.
+- No Markdown links, headers, or code blocks — Telegram doesn't render them
+  in this mode.
+
+When a reply lists more than one product or store, put each one on its own
+line — never run them together in a sentence. Lead each product line with its
+category icon:
+
+📺 tv · ❄️ air_conditioner · 🧊 refrigerator · 🧺 washing_machine · 📦 microwave
+
+Example product line:
+📺 *Samsung 55" Crystal UHD 4K* — ₪1,890 · ⭐4.5
+
+Other icons, used sparingly: 📍 a store, 🛒 an order confirmation, ⭐ a review.
+
+End every reply with a blank line before your follow-up question, so it reads
+as its own line — never tack it onto the end of the last sentence.
 
 ## Tools
 - recommend_products: your main tool. Filter by category, max_price, min_rating,
@@ -191,15 +214,19 @@ def ask_agent(user_id: str, user_message: str) -> str:
 
     except anthropic.AuthenticationError:
         logger.error("Anthropic authentication failed — check ANTHROPIC_API_KEY")
+        notify.send_admin_alert("Authentication error against the Anthropic API — check the API key!")
         return "⚠️ The assistant isn't configured correctly. (Check the API key.)"
     except anthropic.RateLimitError:
         logger.warning("Anthropic rate limit hit")
+        notify.send_admin_alert("Rate limit hit on the Anthropic API — high load or out of credits.")
         return "⏳ I'm a bit overloaded right now. Try again in a moment?"
     except anthropic.APIConnectionError:
         logger.error("Could not reach the Anthropic API")
+        notify.send_admin_alert("Could not connect to the Anthropic API.")
         return "📡 I couldn't reach the assistant service. Check your connection and try again."
     except Exception as exc:
         logger.exception("Unexpected agent error: %s", exc)
+        notify.send_admin_alert(f"Unexpected agent error: {str(exc)[:200]}")
         return "Something went wrong on my end. Try again in a moment 🙏"
 
     if not final_text:

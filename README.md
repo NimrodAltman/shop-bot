@@ -12,13 +12,14 @@ results into a recommendation.
 
 ## Status
 
-All five layers are implemented. The catalog, storage and tool layers are
-verified by direct execution — filtering, distance math, order validation and
-every error path. The bot itself is live and connects to Telegram with real
-credentials; onboarding (buttons, greeting) auto-localizes to the user's
-Telegram language and has been confirmed working in Hebrew. A full
-conversation walkthrough (recommendations, orders, reviews) and README
-screenshots are still pending.
+All layers are implemented. The catalog, storage and tool layers are verified
+by direct execution — filtering, distance math, order validation and every
+error path. The bot connects to Telegram with real credentials; a full
+recommendation round-trip (category → budget → location → a real match) has
+been confirmed live. Rich Markdown formatting, 4-language onboarding, the
+`/update` command, returning-user detection, the location re-offer, and admin
+alerts are all implemented and pass offline checks, but haven't been walked
+through in a live conversation yet. README screenshots are still pending.
 
 Full breakdown, including what is and isn't verified, in
 [`Docs/TODO.md`](Docs/TODO.md).
@@ -40,10 +41,14 @@ Full breakdown, including what is and isn't verified, in
 ## Features
 
 - 💬 Natural conversation in any language — the bot replies in the language you write in
-- 🌐 Onboarding (buttons, greeting) auto-localizes to Hebrew or English based on your Telegram language
+- 🌐 Onboarding (buttons, greeting, `/help`, `/update`) localizes across English, Hebrew, Russian and Arabic — starts from your Telegram client language, then switches the moment you type in a different one
+- 🎨 Replies use Telegram Markdown with per-category icons (📺 ❄️ 🧊 🧺 📦) and one product per line, not a wall of text
 - 🧠 Recommendations matched to your need, budget, brand and rating preferences
-- 📍 Finds nearby stores from shared GPS coordinates, or by city name
+- 📍 Finds nearby stores from shared GPS coordinates, or by city name — and re-offers the location button if you ask about stores in free text before sharing one
+- 🔄 `/update` changes one saved answer (category, budget or city) without redoing the whole flow
+- 👋 A returning user with a saved profile gets a short welcome back instead of being forced through onboarding again
 - 🛒 Places orders, with validation that the store actually carries the product
+- 📣 Optional admin alerts (to your own Telegram) on a new order or an API failure
 - ⭐ Saves and retrieves user reviews
 - ⚡ Answers general appliance questions (specs, energy ratings) without tools
 
@@ -80,6 +85,8 @@ know nothing about Telegram. Swapping either one touches a single file.
 | [`mcp_server.py`](mcp_server.py) | Tool definitions + dispatcher |
 | [`db.py`](db.py) | Storage: in-memory or Supabase |
 | [`data/mock_data.py`](data/mock_data.py) | The catalog — the only file to swap for real data |
+| [`i18n.py`](i18n.py) | Fixed-string localization (4 languages) — the only file `main.py` pulls UI text from |
+| [`notify.py`](notify.py) | Optional admin alerts to Telegram |
 
 More detail in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 
@@ -111,7 +118,9 @@ Fill in two values:
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys |
 
 `SUPABASE_URL` and `SUPABASE_KEY` are optional — leave them empty and the bot
-runs on in-memory storage.
+runs on in-memory storage. `ADMIN_TELEGRAM_ID` is also optional — set it to
+your own numeric Telegram ID (from [@userinfobot](https://t.me/userinfobot))
+to get alerted on a new order or an API failure.
 
 ### 3. Run
 
@@ -125,9 +134,10 @@ Open your bot in Telegram and send `/start`.
 
 | Command | Does |
 |---|---|
-| `/start` | Guided onboarding: category → budget → location |
+| `/start` | Guided onboarding: category → budget → location. A returning user gets a welcome back instead. |
 | `/help` | What the bot can do |
 | `/reset` | Clear the conversation, keep your profile |
+| `/update` | Change just one saved answer (category, budget or city) |
 
 ---
 

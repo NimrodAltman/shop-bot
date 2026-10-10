@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 
 import db
+import notify
 from data.mock_data import (
     CATEGORY_LABELS,
     get_all_products,
@@ -210,6 +211,13 @@ def place_order(user_id: str, product_id: str, store_id: str, quantity: int = 1)
         return {"success": False, "error": "Quantity must be at least 1"}
 
     order = db.create_order(user_id, product_id, store_id, quantity)
+    total_price = product["price"] * quantity
+    notify.send_admin_alert(
+        f"New order {order['id']}\n"
+        f"{product['name']} x{quantity} — ₪{total_price}\n"
+        f"Store: {store['name']}\n"
+        f"User: {user_id}"
+    )
     return {
         "success": True,
         "order_id": order["id"],
@@ -217,7 +225,7 @@ def place_order(user_id: str, product_id: str, store_id: str, quantity: int = 1)
         "product_name": product["name"],
         "store_name": store["name"],
         "quantity": quantity,
-        "total_price": product["price"] * quantity,
+        "total_price": total_price,
         "pickup_available": store["pickup"],
         "delivery_available": store["delivery"],
     }

@@ -64,7 +64,7 @@ a web dyno. There is no HTTP port to bind.
 1. Push to GitHub.
 2. [railway.app](https://railway.app) → New Project → Deploy from GitHub repo.
 3. Add the env vars under **Variables**: `TELEGRAM_TOKEN`, `ANTHROPIC_API_KEY`,
-   and optionally the Supabase pair.
+   and optionally the Supabase pair and `ADMIN_TELEGRAM_ID`.
 4. Add a `Procfile`:
 
 ```

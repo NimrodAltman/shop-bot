@@ -126,7 +126,7 @@ way; no other module knows which is active. `using_supabase()` reports it.
 # user — created by /start, merged by save_user (existing fields preserved)
 {"user_id": "12345", "name": "Nimrod", "city": "Tel Aviv",
  "lat": 32.07, "lng": 34.77, "budget": 3000, "category": "tv",
- "onboarding_complete": True, "created_at": "2026-07-17T..."}
+ "onboarding_complete": True, "lang": "he", "created_at": "2026-07-17T..."}
 
 # order — always created as "pending"
 {"id": "ord_a1b2c3d4", "user_id": "12345", "product_id": "p_tv_01",
@@ -168,6 +168,7 @@ create table if not exists users (
   budget              int,
   category            text,
   onboarding_complete boolean default false,
+  lang                text,  -- 'en' | 'he' | 'ru' | 'ar' — set once typed text gives a signal
   created_at          timestamptz default now()
 );
 

@@ -5,6 +5,7 @@ The Telegram bot: onboarding, inline keyboards, location sharing, free chat.
 
 This module is deliberately thin. It translates Telegram updates into calls to
 ``agent.ask_agent`` and formats the replies — no product logic lives here.
+Localization strings and language detection live in ``i18n.py``.
 
 Two things worth knowing before editing:
 
@@ -17,9 +18,9 @@ Two things worth knowing before editing:
 
 Language: the free-text conversation is handled entirely by the agent, which
 detects the user's language on its own (see ``agent.STABLE_SYSTEM``). The
-onboarding UI below (buttons, /start, /help) never touches the agent, so it is
-localized separately here, based on the user's Telegram client language
-(``update.effective_user.language_code``) — no manual language switch needed.
+onboarding UI below (buttons, /start, /help, /update) never touches the agent,
+so it is localized separately via ``i18n.py``, based on what the user has
+actually typed, then their Telegram client language, then a default.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from telegram import (
     User,
 )
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -49,7 +51,7 @@ from telegram.ext import (
 )
 
 import agent
-from data.mock_data import CATEGORY_LABELS
+import i18n
 
 load_dotenv()
 
@@ -65,128 +67,47 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 # Telegram rejects messages longer than 4096 characters.
 TELEGRAM_MAX_CHARS = 4096
 
-# ── Localization ────────────────────────────────────────────────────────────
-# Only the onboarding UI lives here. Free-text chat is localized by the agent
-# itself, per-message, and isn't affected by any of this.
-SUPPORTED_LANGS = ("en", "he")
-
-CATEGORY_LABELS_HE = {
-    "tv": "טלוויזיה",
-    "air_conditioner": "מזגן",
-    "refrigerator": "מקרר",
-    "washing_machine": "מכונת כביסה",
-    "microwave": "מיקרוגל",
-}
-
-# (internal budget ceiling, English label, Hebrew label)
-BUDGET_OPTIONS = [
-    (1000, "Under ₪1,000", "עד ₪1,000"),
-    (3000, "₪1,000–3,000", "₪1,000–3,000"),
-    (5000, "₪3,000–5,000", "₪3,000–5,000"),
-    (99999, "₪5,000+", "₪5,000 ומעלה"),
-]
-
-STRINGS = {
-    "en": {
-        "greeting": (
-            "Hi {name}! 👋\n\n"
-            "I help you pick a home appliance that actually fits your needs, and "
-            "find a store near you that has it in stock.\n\n"
-            "What are you shopping for?"
-        ),
-        "category_other": "Something else / just browsing",
-        "category_any_label": "an appliance",
-        "category_confirm": "Great — looking for {label}. 👌",
-        "ask_budget": "What's your budget?",
-        "budget_no_limit": "No budget in mind",
-        "budget_confirm_set": "Budget noted: up to ₪{budget:,}.",
-        "budget_confirm_none": "No problem.",
-        "ask_location": "Last thing — where are you? Share your location or just type your city.",
-        "share_location_button": "📍 Share my location",
-        "location_placeholder": "…or just type your city",
-        "location_received": "Got your location 📍",
-        "location_prompt_to_agent": "Which stores are near me, and what do you recommend?",
-        "help": (
-            "*What I can do*\n\n"
-            "• Recommend an appliance for your needs and budget\n"
-            "• Tell you which nearby store carries it\n"
-            "• Place an order and check its status\n"
-            "• Answer questions about specs and energy ratings\n\n"
-            "Just tell me what you're looking for — or send /start to go through "
-            "the guided flow again.\n\n"
-            "_Note: this is a portfolio demo. The stores, stock and orders are "
-            "realistic sample data, not a real retailer._"
-        ),
-        "reset": "Fresh start — what are you looking for? 🛒",
-    },
-    "he": {
-        "greeting": (
-            "היי {name}! 👋\n\n"
-            "אני עוזר לבחור מכשיר חשמלי שבאמת מתאים לצרכים שלך, ולמצוא חנות "
-            "קרובה שיש לה אותו במלאי.\n\n"
-            "מה מחפשים?"
-        ),
-        "category_other": "משהו אחר / רק מסתכלים",
-        "category_any_label": "מכשיר חשמלי",
-        "category_confirm": "מעולה — מחפשים {label}. 👌",
-        "ask_budget": "מה התקציב?",
-        "budget_no_limit": "אין תקציב מוגדר",
-        "budget_confirm_set": "התקציב נקלט: עד ₪{budget:,}.",
-        "budget_confirm_none": "אין בעיה.",
-        "ask_location": "עוד דבר אחד — איפה אתם נמצאים? שתפו מיקום או פשוט הקלידו את העיר.",
-        "share_location_button": "📍 שיתוף המיקום שלי",
-        "location_placeholder": "…או פשוט הקלידו את העיר",
-        "location_received": "קיבלתי את המיקום 📍",
-        "location_prompt_to_agent": "אילו חנויות קרובות אליי, ומה אתם ממליצים?",
-        "help": (
-            "*מה אני יכול לעשות*\n\n"
-            "• להמליץ על מכשיר חשמלי לפי הצרכים והתקציב שלכם\n"
-            "• להגיד לכם איזו חנות קרובה מחזיקה אותו\n"
-            "• לבצע הזמנה ולבדוק את הסטטוס שלה\n"
-            "• לענות על שאלות לגבי מפרטים ודירוגי אנרגיה\n\n"
-            "פשוט תגידו לי מה אתם מחפשים — או שלחו /start כדי לעבור שוב על "
-            "התהליך המודרך.\n\n"
-            "_הערה: זהו פרויקט הדגמה. החנויות, המלאי וההזמנות הם נתוני דוגמה "
-            "ריאליסטיים, לא קמעונאי אמיתי._"
-        ),
-        "reset": "התחלה חדשה — מה אתם מחפשים? 🛒",
-    },
-}
-
 
 def _lang(user: User | None) -> str:
-    """Map a Telegram user's client language to a supported UI language."""
-    code = (getattr(user, "language_code", None) or "en").split("-")[0].lower()
-    return code if code in SUPPORTED_LANGS else "en"
+    """Resolve the UI language for a user via i18n.resolve_lang."""
+    if user is None:
+        return i18n.DEFAULT_LANG
+    profile = agent.get_profile(user.id)
+    return i18n.resolve_lang(profile, getattr(user, "language_code", None))
 
 
 def _t(lang: str, key: str, **kwargs) -> str:
-    return STRINGS[lang][key].format(**kwargs)
+    return i18n.t(lang, key, **kwargs)
 
 
 def _category_label(key: str, lang: str) -> str:
-    labels = CATEGORY_LABELS_HE if lang == "he" else CATEGORY_LABELS
-    return labels.get(key, key)
+    return i18n.category_label(key, lang)
+
+
+def _mentions_location_keywords(text: str, lang: str) -> bool:
+    """True if free text hints the user wants nearby stores without one shared yet."""
+    needle = text.lower()
+    keywords = i18n.LOCATION_KEYWORDS.get(lang, i18n.LOCATION_KEYWORDS[i18n.DEFAULT_LANG])
+    return any(kw in needle for kw in keywords)
 
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
-def _category_keyboard(lang: str) -> InlineKeyboardMarkup:
-    labels = CATEGORY_LABELS_HE if lang == "he" else CATEGORY_LABELS
+def _category_keyboard(lang: str, prefix: str = "cat") -> InlineKeyboardMarkup:
+    labels = i18n.CATEGORY_LABELS_BY_LANG.get(lang, i18n.CATEGORY_LABELS_BY_LANG[i18n.DEFAULT_LANG])
     buttons = [
-        [InlineKeyboardButton(label, callback_data=f"cat:{key}")]
+        [InlineKeyboardButton(label, callback_data=f"{prefix}:{key}")]
         for key, label in labels.items()
     ]
-    buttons.append([InlineKeyboardButton(_t(lang, "category_other"), callback_data="cat:any")])
+    buttons.append([InlineKeyboardButton(_t(lang, "category_other"), callback_data=f"{prefix}:any")])
     return InlineKeyboardMarkup(buttons)
 
 
-def _budget_keyboard(lang: str) -> InlineKeyboardMarkup:
-    label_idx = 2 if lang == "he" else 1
+def _budget_keyboard(lang: str, prefix: str = "budget") -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(option[label_idx], callback_data=f"budget:{option[0]}")]
-        for option in BUDGET_OPTIONS
+        [InlineKeyboardButton(option.get(lang, option["en"]), callback_data=f"{prefix}:{option['value']}")]
+        for option in i18n.BUDGET_OPTIONS
     ]
-    buttons.append([InlineKeyboardButton(_t(lang, "budget_no_limit"), callback_data="budget:0")])
+    buttons.append([InlineKeyboardButton(_t(lang, "budget_no_limit"), callback_data=f"{prefix}:0")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -199,9 +120,22 @@ def _location_keyboard(lang: str) -> ReplyKeyboardMarkup:
     )
 
 
+def _update_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(_t(lang, "update_field_category"), callback_data="upd:category")],
+        [InlineKeyboardButton(_t(lang, "update_field_budget"), callback_data="upd:budget")],
+        [InlineKeyboardButton(_t(lang, "update_field_location"), callback_data="upd:location")],
+    ])
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def _send(update: Update, text: str, **kwargs) -> None:
-    """Send a reply, splitting anything past Telegram's length cap."""
+    """Send a reply, splitting anything past Telegram's length cap.
+
+    Falls back to plain text if the Markdown doesn't parse — an unmatched
+    ``*`` or ``_`` in a model-generated reply makes Telegram reject the whole
+    message rather than rendering it loosely.
+    """
     chat = update.effective_chat
     if not chat:
         return
@@ -209,7 +143,16 @@ async def _send(update: Update, text: str, **kwargs) -> None:
         chunk = text[i : i + TELEGRAM_MAX_CHARS]
         # Keyboards only ride along with the final chunk.
         is_last = i + TELEGRAM_MAX_CHARS >= len(text)
-        await chat.send_message(chunk, **(kwargs if is_last else {}))
+        send_kwargs = kwargs if is_last else {}
+        try:
+            await chat.send_message(chunk, **send_kwargs)
+        except BadRequest as exc:
+            if send_kwargs.get("parse_mode") and "parse" in str(exc).lower():
+                logger.warning("Markdown parse failed, retrying as plain text: %s", exc)
+                fallback = {k: v for k, v in send_kwargs.items() if k != "parse_mode"}
+                await chat.send_message(chunk, **fallback)
+            else:
+                raise
 
 
 async def _reply_via_agent(update: Update, message: str) -> None:
@@ -222,25 +165,47 @@ async def _reply_via_agent(update: Update, message: str) -> None:
     await chat.send_action(ChatAction.TYPING)
     # ask_agent is blocking (network + tool calls) — keep it off the event loop.
     reply = await asyncio.to_thread(agent.ask_agent, str(user.id), message)
-    await _send(update, reply)
+
+    lang = _lang(user)
+    profile = agent.get_profile(user.id)
+
+    # Claude can't attach a Telegram keyboard itself. Re-offer the relevant
+    # keyboard when the reply would otherwise leave the agent to type the
+    # options out as a sentence:
+    keyboard = None
+    if not profile.get("category"):
+        keyboard = _category_keyboard(lang)
+    elif not profile.get("lat") and not profile.get("city") and _mentions_location_keywords(message, lang):
+        keyboard = _location_keyboard(lang)
+
+    await _send(update, reply, parse_mode="Markdown", reply_markup=keyboard)
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start — greet and begin onboarding: category → budget → location."""
+    """/start — greet and begin onboarding: category → budget → location.
+
+    A returning user with a completed profile gets a short welcome-back
+    instead of being forced through onboarding again; their saved category,
+    budget and location are left untouched.
+    """
     user = update.effective_user
     if not user:
         return
     lang = _lang(user)
 
     agent.reset_conversation(user.id)
+
+    if agent.get_profile(user.id).get("onboarding_complete"):
+        await _send(update, _t(lang, "welcome_back", name=user.first_name), parse_mode="Markdown")
+        return
+
     agent.update_profile(user.id, name=user.first_name, onboarding_complete=False)
 
-    await _send(
-        update,
-        _t(lang, "greeting", name=user.first_name),
-        reply_markup=_category_keyboard(lang),
-    )
+    # Two messages, matching the reference bot's rhythm: a bold capabilities
+    # card first, then the actual question with its keyboard attached.
+    await _send(update, _t(lang, "greeting", name=user.first_name), parse_mode="Markdown")
+    await _send(update, _t(lang, "ask_category"), reply_markup=_category_keyboard(lang))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -257,6 +222,15 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = _lang(user)
     agent.reset_conversation(user.id)
     await _send(update, _t(lang, "reset"))
+
+
+async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/update — change one saved profile field without a full /reset."""
+    user = update.effective_user
+    if not user:
+        return
+    lang = _lang(user)
+    await _send(update, _t(lang, "update_menu_prompt"), reply_markup=_update_menu_keyboard(lang))
 
 
 # ── Onboarding callbacks ──────────────────────────────────────────────────────
@@ -299,6 +273,61 @@ async def on_budget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send(update, _t(lang, "ask_location"), reply_markup=_location_keyboard(lang))
 
 
+# ── Update-one-field callbacks ─────────────────────────────────────────────────
+async def on_update_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User picked which single field to edit from the /update menu."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    lang = _lang(query.from_user)
+    field = query.data.split(":", 1)[1]
+
+    if field == "category":
+        await _send(update, _t(lang, "ask_category"), reply_markup=_category_keyboard(lang, prefix="updcat"))
+    elif field == "budget":
+        await _send(update, _t(lang, "ask_budget"), reply_markup=_budget_keyboard(lang, prefix="updbudget"))
+    else:
+        await _send(update, _t(lang, "ask_location"), reply_markup=_location_keyboard(lang))
+
+
+async def on_update_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Category edited via /update — confirm, don't chain into budget."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    lang = _lang(query.from_user)
+    category = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+
+    if category == "any":
+        agent.update_profile(user_id, category=None)
+        label = _t(lang, "category_any_label")
+    else:
+        agent.update_profile(user_id, category=category)
+        label = _category_label(category, lang)
+
+    await query.edit_message_text(_t(lang, "category_confirm", label=label))
+
+
+async def on_update_budget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Budget edited via /update — confirm, don't chain into location."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    lang = _lang(query.from_user)
+    budget = int(query.data.split(":", 1)[1])
+    agent.update_profile(query.from_user.id, budget=budget or None)
+
+    shown = _t(lang, "budget_confirm_none") if not budget else _t(lang, "budget_confirm_set", budget=budget)
+    await query.edit_message_text(shown)
+
+
 # ── Message handlers ──────────────────────────────────────────────────────────
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """User shared coordinates — hand them to the agent in a parseable form."""
@@ -322,10 +351,24 @@ async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Any free-text message goes straight to the agent."""
+    """Any free-text message goes straight to the agent.
+
+    Also updates the stored UI-language preference when the text gives a
+    clear signal — see ``i18n.detect_lang``. The agent's own reply is
+    unaffected by this (it already detects language per-message on its own);
+    this only changes which language future onboarding UI (menus, /help,
+    /update) uses.
+    """
     message = update.message
+    user = update.effective_user
     if not message or not message.text:
         return
+
+    if user:
+        detected = i18n.detect_lang(message.text)
+        if detected and agent.get_profile(user.id).get("lang") != detected:
+            agent.update_profile(user.id, lang=detected)
+
     await _reply_via_agent(update, message.text)
 
 
@@ -352,8 +395,12 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CallbackQueryHandler(on_category, pattern=r"^cat:"))
     app.add_handler(CallbackQueryHandler(on_budget, pattern=r"^budget:"))
+    app.add_handler(CallbackQueryHandler(on_update_field, pattern=r"^upd:"))
+    app.add_handler(CallbackQueryHandler(on_update_category, pattern=r"^updcat:"))
+    app.add_handler(CallbackQueryHandler(on_update_budget, pattern=r"^updbudget:"))
     app.add_handler(MessageHandler(filters.LOCATION, on_location))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_error_handler(on_error)
