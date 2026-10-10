@@ -40,7 +40,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # Tools that act on behalf of a specific user. The user id is injected from the
 # Telegram context rather than trusted from the model, so a confused turn can't
 # place an order or leave a review under someone else's id.
-_USER_SCOPED_TOOLS = {"place_order", "save_review"}
+_USER_SCOPED_TOOLS = {"place_order", "save_review", "get_order_status"}
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────

@@ -231,10 +231,15 @@ def place_order(user_id: str, product_id: str, store_id: str, quantity: int = 1)
     }
 
 
-def get_order_status(order_id: str) -> dict:
-    """Look up an existing order and expand it with product/store names."""
+def get_order_status(user_id: str, order_id: str) -> dict:
+    """Look up one of the calling user's orders, with product/store names.
+
+    An order belonging to someone else returns the same "not found" error as
+    an id that doesn't exist — telling the two apart would let a caller probe
+    which order ids are real.
+    """
     order = db.get_order(order_id)
-    if not order:
+    if not order or order["user_id"] != str(user_id):
         return {"error": f"No order with id '{order_id}'"}
 
     product = get_product_by_id(order["product_id"])
@@ -401,13 +406,14 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "get_order_status",
-        "description": "Check the status of an existing order by its order id.",
+        "description": "Check the status of one of this user's own orders by its order id.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "user_id": {"type": "string"},
                 "order_id": {"type": "string"},
             },
-            "required": ["order_id"],
+            "required": ["user_id", "order_id"],
         },
     },
     {
@@ -490,7 +496,7 @@ def execute_tool(tool_name: str, tool_input: dict) -> dict:
             )
 
         elif tool_name == "get_order_status":
-            return get_order_status(tool_input["order_id"])
+            return get_order_status(tool_input["user_id"], tool_input["order_id"])
 
         elif tool_name == "save_review":
             return save_review(
