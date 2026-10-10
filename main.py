@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 from dotenv import load_dotenv
@@ -107,6 +108,17 @@ def _t(lang: str, key: str, **kwargs) -> str:
 
 def _category_label(key: str, lang: str) -> str:
     return i18n.category_label(key, lang)
+
+
+# on_location builds "LOCATION_SHARED: lat,lng" itself and the system prompt
+# treats it as real coordinates. Typed by hand in a normal message it would be
+# taken just as seriously, so it is defanged on the way in.
+_TRUSTED_MARKER = re.compile(r"LOCATION_SHARED\s*:", re.IGNORECASE)
+
+
+def _defang_trusted_markers(text: str) -> str:
+    """Neutralize in-band markers the system prompt is told to trust."""
+    return _TRUSTED_MARKER.sub("location mentioned by the user:", text)
 
 
 def _mentions_location_keywords(text: str, lang: str) -> bool:
@@ -399,7 +411,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if detected and agent.get_profile(user.id).get("lang") != detected:
             agent.update_profile(user.id, lang=detected)
 
-    await _reply_via_agent(update, message.text)
+    await _reply_via_agent(update, _defang_trusted_markers(message.text))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
