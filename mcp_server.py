@@ -53,6 +53,15 @@ def _normalize(text: str) -> str:
     return "".join(c for c in (text or "").lower() if c.isalnum() or c.isspace()).strip()
 
 
+def _public_review(review: dict) -> dict:
+    """A review as other shoppers may see it — without the author's user id."""
+    return {
+        "rating": review["rating"],
+        "comment": review.get("comment", ""),
+        "created_at": review["created_at"],
+    }
+
+
 def _summarize(product: dict) -> dict:
     """A compact product view — keeps tool results small enough to stay cheap."""
     return {
@@ -149,7 +158,7 @@ def get_product_details(product_id: str) -> dict:
         "product": product,
         "category_label": CATEGORY_LABELS.get(product["category"], product["category"]),
         "available_at": [s for s in stores if s],
-        "user_reviews": reviews,
+        "user_reviews": [_public_review(r) for r in reviews],
         "user_review_count": len(reviews),
     }
 
@@ -283,7 +292,7 @@ def get_reviews(product_id: str) -> dict:
         "product_name": product["name"],
         "catalog_rating": product["rating"],
         "catalog_rating_count": product["rating_count"],
-        "user_reviews": reviews,
+        "user_reviews": [_public_review(r) for r in reviews],
         "user_average": average,
         "count": len(reviews),
     }
