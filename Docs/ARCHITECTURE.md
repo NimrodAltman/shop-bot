@@ -104,6 +104,7 @@ common way prompt caching is silently lost.
 | **Markdown with a plain-text fallback, not MarkdownV2** | Telegram's legacy `Markdown` mode only requires closing `*`/`_` pairs; `MarkdownV2` requires escaping punctuation (`. ! - ( )` etc.) in *all* text, not just formatting — far easier for an LLM to violate. Legacy mode is still strict enough to reject a message outright on an unmatched `*`, so `_send()` catches that `BadRequest` and retries without `parse_mode` rather than losing the reply. |
 | **Admin alerts via the bot's own Telegram, not a second channel** | `notify.py` posts a plain `sendMessage` to the developer's own chat on an Anthropic API failure (`agent.py`) or a new order (`mcp_server.py`). Reuses the existing `TELEGRAM_TOKEN` — no Twilio/WhatsApp dependency. Optional: does nothing if `ADMIN_TELEGRAM_ID` isn't set, and never raises, so a failed alert can't take down the actual conversation. |
 | **`/update` re-uses the onboarding keyboards, not new ones** | Editing one saved field (category/budget/location) needed the same label lists as onboarding without inheriting its chaining (picking a category during `/update` shouldn't then ask for a budget). `_category_keyboard`/`_budget_keyboard` take an optional `prefix` so `/update`'s callbacks (`updcat:`, `updbudget:`) route to separate handlers that confirm and stop, instead of duplicating the label-building loops. |
+| **Rate limiting is in-memory and per-user, not global** | The bot is reachable by anyone, so unbounded Anthropic calls were a real cost risk. A single gate in `_reply_via_agent` (the only path to a paid call) tracks a sliding window per Telegram user id — no new dependency, consistent with everything else defaulting to in-memory. Deliberately doesn't stop a flood spread across many accounts; that would need a global cap, which isn't worth the added state for a demo bot. |
 
 ## Two bugs worth knowing about
 
@@ -124,17 +125,23 @@ on the main thread.
 
 ### `user_id` is injected, never trusted
 
-`place_order` and `save_review` act on behalf of a specific user. The model is
-told the user id, but the id it sends is **overwritten** with the real one from
-the Telegram context before the tool runs:
+`place_order`, `save_review` and `get_order_status` act on behalf of a
+specific user. The model is told the user id, but the id it sends is
+**overwritten** with the real one from the Telegram context before the tool
+runs:
 
 ```python
 if block.name in _USER_SCOPED_TOOLS:
     tool_input["user_id"] = user_id
 ```
 
-Without this, a confused turn could place an order under someone else's id.
-Tool inputs are model output — treat them as untrusted.
+Without this, a confused turn could place an order — or read one — under
+someone else's id. Tool inputs are model output — treat them as untrusted.
+`get_order_status` additionally checks that the order it finds actually
+belongs to that user, returning the same "not found" error either way so the
+response can't be used to tell a real order id from a fake one. Full writeup
+of this and the rest of the security pass in
+[`Docs/TODO.md`](TODO.md#6-round-3-security-review--pushed-partially-confirmed-live).
 
 ## Validation lives in the tools
 

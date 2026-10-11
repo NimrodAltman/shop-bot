@@ -12,14 +12,19 @@ results into a recommendation.
 
 ## Status
 
-All layers are implemented. The catalog, storage and tool layers are verified
-by direct execution — filtering, distance math, order validation and every
-error path. The bot connects to Telegram with real credentials; a full
-recommendation round-trip (category → budget → location → a real match) has
-been confirmed live. Rich Markdown formatting, 4-language onboarding, the
-`/update` command, returning-user detection, the location re-offer, and admin
-alerts are all implemented and pass offline checks, but haven't been walked
-through in a live conversation yet. README screenshots are still pending.
+All layers are implemented, committed and pushed. The catalog, storage and
+tool layers are verified by direct execution — filtering, distance math,
+order validation and every error path. A full live round-trip (category →
+budget → location → recommendation → order → checking that order's status)
+has been confirmed in Telegram, including after a security pass that changed
+`get_order_status`'s signature — the highest-risk point for that change broke
+nothing. A security review closed 6 issues (an order-status IDOR, reviews
+leaking reviewer ids, no rate limiting, two prompt-injection surfaces — see
+[`Docs/TODO.md`](Docs/TODO.md) for the full list), each offline-verified with
+an attack scenario. Rich Markdown formatting, 4-language onboarding,
+`/update`, returning-user detection, the location re-offer, and admin alerts
+are implemented and pass offline checks but are still pending a live pass.
+README screenshots are still pending.
 
 Full breakdown, including what is and isn't verified, in
 [`Docs/TODO.md`](Docs/TODO.md).
@@ -37,6 +42,9 @@ Full breakdown, including what is and isn't verified, in
 - **A pluggable storage layer** — in-memory by default, Supabase when configured
   ([`db.py`](db.py))
 - **Prompt caching** — a split system prompt that keeps the cacheable prefix stable
+- **A documented security pass** — authorization checks on user-scoped tools,
+  per-user rate limiting, and defenses against two prompt-injection surfaces
+  (see [Security](#security))
 
 ## Features
 
@@ -166,6 +174,34 @@ Set `SUPABASE_URL` **and** `SUPABASE_KEY` and `db.py` switches to Supabase
 automatically, so users, orders, reviews and chat history survive restarts. If
 the client can't be created, it falls back to in-memory rather than crashing.
 Table SQL is in [`Docs/DATA_MODEL.md`](Docs/DATA_MODEL.md).
+
+---
+
+## Security
+
+Reachable by anyone on Telegram, so it's threat-modeled as a public bot, not
+a trusted internal tool. A dedicated review (see
+[`Docs/TODO.md`](Docs/TODO.md) for the full writeup) found and fixed:
+
+- **IDOR on order status** — `get_order_status` now requires the caller's
+  `user_id` (injected server-side, same as `place_order`/`save_review`) and
+  refuses someone else's order with the identical error a fake order id
+  gets, so the error can't be used to enumerate real orders.
+- **Reviewer id leakage** — `get_reviews`/`get_product_details` used to
+  return the reviewer's raw Telegram `user_id` with every review; now only
+  rating, comment and date.
+- **Unbounded API cost** — any chat could trigger unlimited paid Anthropic
+  calls. A per-user sliding-window limit (12 messages/60s) now sits in front
+  of every call.
+- **Two prompt-injection surfaces** — a user could type the internal
+  `LOCATION_SHARED: lat,lng` marker to spoof a location, and a multi-line
+  display name could be dressed up to look like a system instruction inside
+  the prompt. Both are neutralized before the agent sees them.
+- **Markdown injection via display name** — an unescaped name like
+  `[click here](url)` rendered as a live link in the bot's own greeting.
+
+No secrets have ever been committed, checked both in the working tree and
+across the full commit history, not just the latest state.
 
 ---
 

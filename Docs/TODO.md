@@ -1,15 +1,11 @@
 # TODO / Roadmap
 
-Status of the project and what's left. Updated 2026-09-18.
+Status of the project and what's left. Updated 2026-10-11.
 
 ## Status
 
-Every layer is written and the repo is live (mostly — see the commit note
-below). The catalog, storage and tool layers are verified by direct execution.
-The bot connects to Telegram with real credentials and a live conversation was
-partially walked through — enough to compare it side-by-side against another
-Telegram bot used as an architecture reference, which drove two rounds of
-gap-closing work:
+Every layer is written, committed and pushed. The catalog, storage and tool
+layers are verified by direct execution. Three rounds of work have landed:
 
 - **Round 1:** rich Markdown formatting (icons, structured product lists) and
   onboarding across four languages (English/Hebrew/Russian/Arabic, with
@@ -21,21 +17,34 @@ gap-closing work:
   location-share button re-appears if the user asks about stores in free text
   before ever sharing one; optional admin alerts (`notify.py`) on a new order
   or an API failure.
+- **Round 3 (security review):** a full pass over the whole project — tool
+  authorization, data exposure, prompt injection, cost abuse — closed 6 issues,
+  the most serious being an IDOR on order status. Full list below under
+  "Round 3: security fixes."
 
-Both rounds are code-complete and pass offline checks, but **neither has been
-confirmed in a live conversation** — the bot was restarted to load round 2 and
-hasn't been re-tested since.
+**Live testing has started and the highest-risk regression passed:** after
+rounds 1–3 landed, a full onboarding → recommendation → order →
+`get_order_status` round-trip was walked through live in Telegram, including
+asking for the order status by name (the exact call whose signature the
+security fix changed) — it returned the correct "pending" status. The rest of
+the live checklist (4-language rendering, `/update`, returning-user greeting,
+rate limiting, the two injection fixes) is still open — see "Next up" below.
 
 | Layer | State |
 |---|---|
 | `data/mock_data.py` | ✅ Done — 6 stores, 11 products |
 | `db.py` | ✅ Done, tested — in-memory verified; Supabase path untested |
-| `mcp_server.py` | ✅ Done, tested — all 10 tools + error paths + admin alert on a new order |
-| `agent.py` | ✅ Done. Formatting rules in the system prompt; admin alert on each API-error branch — **not yet confirmed live** |
-| `main.py` | ✅ Done. Localization delegated to `i18n.py`; returning-user greeting, `/update`, and the location-keyboard re-offer all added — **none confirmed live yet** |
-| `i18n.py` | ✅ New. Detection/resolution + all fixed strings for 4 languages — verified offline (see below), not yet exercised live |
-| `notify.py` | ✅ New. Silent no-op without `ADMIN_TELEGRAM_ID` — verified offline, not yet exercised live |
-| Docs | ✅ Done — README, architecture, data model, deployment, this file |
+| `mcp_server.py` | ✅ Done, tested. `get_order_status` now requires and checks `user_id`; review tools strip the reviewer's `user_id` before returning |
+| `agent.py` | ✅ Done. Formatting rules in the system prompt; admin alert on each API-error branch; `get_order_status` added to the server-injected `_USER_SCOPED_TOOLS`; profile text sanitized before it enters the prompt |
+| `main.py` | ✅ Done. Localization delegated to `i18n.py`; returning-user greeting, `/update`, location-keyboard re-offer; per-user rate limiting (12 msg/60s); the `LOCATION_SHARED` marker is defanged in typed text; the Telegram display name is Markdown-escaped |
+| `i18n.py` | ✅ Detection/resolution + all fixed strings for 4 languages, including the rate-limit notice |
+| `notify.py` | ✅ Silent no-op without `ADMIN_TELEGRAM_ID` |
+| Docs | ✅ README, architecture, data model, deployment, this file |
+
+**Live-confirmed so far:** `/start` → category → budget → location →
+`recommend_products` → `place_order` → `get_order_status` (owner reading
+their own order, post-fix). **Not yet live-confirmed:** everything else in
+rounds 1–3 — see the checklist in "Next up."
 
 ### What was actually verified
 
@@ -73,18 +82,41 @@ hasn't been re-tested since.
   a returning user's profile (`category`, `budget`) is confirmed left
   untouched by the `/start` returning-user branch; `place_order` still
   succeeds with `notify` wired in.
+- **Round 3 (security fixes), offline, one scenario per fix:** a second
+  `user_id` reading someone else's `order_id` gets the identical
+  "no order with id" error a nonexistent id gets (no cross-user read, no
+  existence oracle); `get_reviews`/`get_product_details` contain no `user_id`
+  anywhere in their JSON after a review is saved; a simulated flood of 20
+  messages from one user lets exactly 12 through and blocks the rest, while a
+  second user is unaffected and an expired window frees up again; four
+  variants of a hand-typed `LOCATION_SHARED: lat,lng` are all rewritten to
+  plain text while ordinary messages are untouched; a multi-line profile name
+  crafted to look like a system instruction is flattened to one line and
+  capped at 64 characters; a `[click here](url)` display name no longer
+  parses as a link and stray `*`/`_` no longer open unclosed emphasis, while
+  real names in four scripts pass through unchanged. All six verified to not
+  interfere with each other in one combined run.
+- **Live, post-fix:** the single highest-risk regression point — asking "what's
+  the status of my order" after `get_order_status` started requiring
+  `user_id` — was exercised in a real Telegram conversation and returned the
+  correct status for the order's actual owner.
 
 ### What was not verified
 
 - **Everything in round 1** — rich Markdown rendering, the parse-error
   fallback, 4-language onboarding, dynamic language switching — none of it has
   been seen in a live Telegram conversation yet.
-- **Everything in round 2** — the offline checks above prove the logic is
-  correct in isolation, but no real `/update`, no real returning-user
-  `/start`, no real free-text location re-offer, and no real admin alert have
-  been observed against the live bot.
-- The rest of the conversation checklist below — orders, reviews, city-name
-  search, general questions.
+- **Most of round 2** — no real `/update`, no real returning-user `/start`,
+  no real free-text location re-offer, and no real admin alert have been
+  observed against the live bot yet.
+- **Round 3's live confirmation is partial** — the order-status fix (the
+  highest-risk one) is confirmed live; the cross-user IDOR block itself
+  needs a second Telegram account to exercise directly (the offline test
+  above substitutes for this); rate limiting, the location-marker defang,
+  and the Markdown-escaped display name have not been tried against the
+  live bot.
+- The rest of the conversation checklist below — reviews, city-name search,
+  general questions.
 - Prompt caching behavior in practice (only inspected structurally, not via
   `usage.cache_read_input_tokens` on a real request).
 - The Supabase code path (needs a project + the tables).
@@ -93,16 +125,26 @@ hasn't been re-tested since.
 
 ## Next up
 
-### 1. Re-test live — two rounds of gap-closing work are stacked up untested
+### 1. Re-test live — three rounds of gap-closing and security work are stacked up untested
 
-The bot was restarted to load round 2 but hasn't been exercised since. This is
-the immediate next step — everything else in this section is downstream of it.
+This is the immediate next step — everything else in this section is
+downstream of it.
 
 - [x] Bot connects to Telegram with real credentials, no startup errors
 - [x] `/start` onboarding UI renders in the user's language (Hebrew confirmed)
 - [x] A real recommendation round-trip (category → budget → location →
       `recommend_products` → a genuine match) — confirmed with an air
       conditioner recommendation
+- [x] Order flow: confirm → `place_order` → order id → `get_order_status`,
+      including the post-security-fix owner read (see Round 3 below)
+- [ ] **Cross-user order read is actually blocked** — needs a second Telegram
+      account; place an order as user A, ask about its `order_id` as user B,
+      confirm the same "not found" error a fake id gets
+- [ ] **Rate limiting fires and recovers** — send 13+ messages quickly, confirm
+      message 13 gets the rate-limited notice instead of an answer, and that a
+      different account is unaffected at the same time
+- [ ] **`LOCATION_SHARED` spoofing is neutralized** — type the marker by hand
+      in free text, confirm the bot does not treat it as a real location
 - [ ] **Rich formatting renders correctly** — bold product names, category
       icons, one product per line, no raw `*`/`_` leaking into the message
 - [ ] **The Markdown-parse-error fallback actually fires and recovers** if the
@@ -125,25 +167,24 @@ the immediate next step — everything else in this section is downstream of it.
       order, confirm a Telegram message arrives
 - [ ] Location sharing returns genuinely nearby stores
 - [ ] City name (typed instead of GPS) works
-- [ ] Order flow: confirm → `place_order` → order id → `get_order_status`
 - [ ] Ordering from a store that doesn't stock the item is refused gracefully
-- [ ] Reviews save and read back
+- [ ] Reviews save and read back, and no `user_id` is visible in the reply
 - [ ] A general question ("what's a good energy rating?") answers without tools
 - [ ] Asked whether stores are real, the bot says it's demo data
 - [ ] `/reset` clears context; `/help` reads correctly in all four languages
 
 ### 2. Commit and push this batch
 
-`main.py`, `agent.py` and `mcp_server.py` all have substantial uncommitted
-work across both rounds, plus the new `i18n.py` and `notify.py`. Docs are
-already updated to match. Recommendation: run the checklist above first —
-last time this project pushed unverified UI code (the original 2-language
-onboarding), it turned out to have the exact "asks for category as a
-sentence" gap that round 2 just fixed, so a live pass before committing has
-already paid for itself twice now.
+**Done.** Rounds 1–2 and the 6 security fixes (round 3) are all pushed, each
+fix in its own commit. The live-regression pass before pushing (onboarding
+through order-status) caught no breakage — the "asks for category as a
+sentence" gap from before round 2 is the reason this project tests live
+before pushing UI/behavior changes at all, and it paid for itself again.
 
-- [x] ~~Commit and push the earlier localization change~~ — done, `ce8eb27`
-- [ ] Commit and push round 1 + round 2, once re-tested above
+- [x] ~~Commit and push the earlier localization change~~ — `ce8eb27`
+- [x] ~~Commit and push round 1 + round 2~~ — `3fa53cd`
+- [x] ~~Commit and push round 3 (security fixes), one commit per fix~~ —
+      `7009c98`, `e340112`, `3825bda`, `2c342f0`, `5fdea98`, `b3f8026`
 
 ### 3. ~~Rich message formatting~~ — code-complete, pending the re-test above
 
@@ -217,7 +258,55 @@ screen and self-service data deletion, and name transliteration. None of
 these were needed to close the gaps that mattered; the first two actively
 conflict with this project's architecture.
 
-### 6. Screenshots for the README
+### 6. ~~Round 3: security review~~ — pushed, partially confirmed live
+
+A full pass over the project, scoped to three threat categories the bot is
+actually exposed to as a public Telegram bot: prompt injection, cross-user
+data leakage, and cost abuse. One commit per fix, each with its own offline
+attack-scenario test (see "What was actually verified" above).
+
+- [x] `mcp_server.py` — **IDOR**: `get_order_status` took only an `order_id`;
+      any user could read any order's product, store, quantity and price. Now
+      requires `user_id` and returns the same "not found" error for someone
+      else's order as for a fake id, so the error can't be used to enumerate
+      real order ids. `agent.py`: `get_order_status` added to
+      `_USER_SCOPED_TOOLS`, so the id is injected server-side like
+      `place_order`/`save_review`, never trusted from the model.
+- [x] `mcp_server.py` — `get_reviews`/`get_product_details` returned the raw
+      stored review, including the reviewer's Telegram `user_id`. Both now map
+      through `_public_review()`, which exposes only rating/comment/date.
+- [x] `main.py` — **no rate limiting anywhere**, so one chat could trigger
+      unlimited paid Anthropic calls. `_reply_via_agent` is the only path to a
+      paid call; it now checks a per-user sliding window (12 messages/60s,
+      in memory) before calling the agent, and replies with a translated
+      notice instead when exceeded.
+- [x] `main.py` — the system prompt tells the model `LOCATION_SHARED: lat,lng`
+      in a message means real shared coordinates; nothing stopped a user from
+      typing that string themselves. `on_text` now rewrites the marker to
+      plain wording before the agent sees it; `on_location` is unaffected.
+- [x] `agent.py` — the profile (including the user's Telegram display name)
+      is rendered into the system prompt; a multi-line name could be dressed
+      up to look like a system instruction. `_sanitize_profile()` collapses
+      whitespace and caps `name`/`city` at 64 characters before that happens,
+      and the prompt now states explicitly that profile values are data, not
+      instructions.
+- [x] `main.py` — the display name was interpolated into greeting messages
+      sent with `parse_mode="Markdown"` unescaped; a name like
+      `[click here](url)` rendered as a live link. `_escape_markdown()` now
+      backslash-escapes Telegram legacy Markdown's four special characters
+      before the name is used.
+- [ ] Live-confirmed: only the order-status fix so far (see above). The other
+      five are offline-verified only — see item 1's checklist.
+
+**Scoped out on purpose, not forgotten:** a global (cross-account) rate limit
+— the per-user cap doesn't stop the same flood spread across many accounts;
+upper bounds on `quantity`/`limit`/`radius_km` in tool inputs — nothing
+exploitable with 6 stores and 11 products, but worth capping before any real
+catalog; pinning dependency versions in `requirements.txt` (currently `>=`);
+Supabase row-level security (already tracked below, and moot while
+unconnected).
+
+### 7. Screenshots for the README
 
 The README has no screenshots — the one gap against the original plan. Capture
 **after** the re-test above, so they show the real experience:
@@ -228,7 +317,7 @@ The README has no screenshots — the one gap against the original plan. Capture
 - [ ] An order confirmation
 - [ ] Commit to `Docs/images/` and embed in the README
 
-### 7. Polish
+### 8. Polish
 
 - [ ] Add a `/myorders` command (`db.get_user_orders` exists and is unused)
 - [ ] Set the bot's description and avatar via @BotFather
