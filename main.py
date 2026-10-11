@@ -106,6 +106,17 @@ def _t(lang: str, key: str, **kwargs) -> str:
     return i18n.t(lang, key, **kwargs)
 
 
+# Telegram's legacy Markdown treats these four characters as formatting.
+# The display name is the only user-controlled text ever interpolated into a
+# parse_mode="Markdown" message — without escaping it, a name like
+# "[click here](http://evil.example)" renders as a live link in the greeting.
+_MARKDOWN_SPECIAL = re.compile(r"([_*`\[])")
+
+
+def _escape_markdown(text: str) -> str:
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
+
+
 def _category_label(key: str, lang: str) -> str:
     return i18n.category_label(key, lang)
 
@@ -239,14 +250,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     agent.reset_conversation(user.id)
 
     if agent.get_profile(user.id).get("onboarding_complete"):
-        await _send(update, _t(lang, "welcome_back", name=user.first_name), parse_mode="Markdown")
+        await _send(update, _t(lang, "welcome_back", name=_escape_markdown(user.first_name)), parse_mode="Markdown")
         return
 
     agent.update_profile(user.id, name=user.first_name, onboarding_complete=False)
 
     # Two messages, matching the reference bot's rhythm: a bold capabilities
     # card first, then the actual question with its keyboard attached.
-    await _send(update, _t(lang, "greeting", name=user.first_name), parse_mode="Markdown")
+    await _send(update, _t(lang, "greeting", name=_escape_markdown(user.first_name)), parse_mode="Markdown")
     await _send(update, _t(lang, "ask_category"), reply_markup=_category_keyboard(lang))
 
 
